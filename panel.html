@@ -1,218 +1,298 @@
 <!DOCTYPE html>
 <html lang="tr">
 <head>
-    <meta charset="UTF-R">
+    <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>İzleyici Paneli</title>
-    <!-- Gerekli olan Socket.IO ve Tailwind CSS kütüphanelerini yüklüyoruz -->
-    <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
-    <script src="https://cdn.tailwindcss.com"></script>
+    <title>İzleyici Kontrol Paneli</title>
+    <!-- Socket.IO kütüphanesini CDN üzerinden çekiyoruz -->
+    <!-- Bu, sunucuyla gerçek zamanlı iletişim kurmamızı sağlar -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.5/socket.io.js"></script>
     <style>
-        body { font-family: 'Inter', sans-serif; }
-        video {
-            transform: scaleX(-1); /* Görüntüyü aynala (isteğe bağlı) */
+        /* Arayüzü modern ve karanlık bir temada tasarlıyoruz */
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background-color: #121212;
+            color: #e0e0e0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+            line-height: 1.6;
+        }
+        #controls {
+            width: 90%;
+            max-width: 800px;
+            padding: 24px;
+            background-color: #1e1e1e;
+            border-radius: 12px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+            border: 1px solid #333;
+        }
+        h1 {
+            text-align: center;
+            color: #ffffff;
+            margin-top: 0;
+            border-bottom: 2px solid #333;
+            padding-bottom: 16px;
+        }
+        #status {
+            text-align: center;
+            padding: 12px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            font-weight: 500;
+            transition: all 0.3s ease;
+        }
+        /* Bağlantı durumuna göre renkleri güncelleyeceğiz */
+        .connecting { background-color: #4a4a4a; }
+        .connected { background-color: #28a745; color: #ffffff; }
+        .disconnected { background-color: #dc3545; color: #ffffff; }
+        
+        button {
+            display: block;
+            width: 100%;
+            padding: 14px;
+            font-size: 16px;
+            font-weight: bold;
+            color: #ffffff;
+            background: linear-gradient(145deg, #6a11cb, #2575fc);
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3);
+        }
+        button:hover {
+            opacity: 0.9;
+            box-shadow: 0 6px 20px rgba(90, 116, 255, 0.5);
+            transform: translateY(-2px);
+        }
+        button:active {
+            transform: translateY(1px);
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
+        }
+        button:disabled {
+            background: #555;
+            cursor: not-allowed;
+            opacity: 0.7;
+        }
+        /* Gelen video akışının gösterileceği yer */
+        #video-container {
+            margin-top: 20px;
+            background-color: #000000;
+            border-radius: 8px;
+            overflow: hidden;
+            /* Görüntünün ekrana sığmasını sağlıyoruz */
+            width: 100%;
+            position: relative;
+        }
+        #remoteVideo {
+            width: 100%;
+            height: auto;
+            display: block;
         }
     </style>
 </head>
-<body class="bg-gray-900 text-white min-h-screen flex items-center justify-center">
+<body>
 
-    <div class="w-full max-w-4xl p-6 bg-gray-800 rounded-lg shadow-xl">
-        <h1 class="text-3xl font-bold text-center mb-4 text-indigo-400">İzleyici Kontrol Paneli</h1>
+    <div id="controls">
+        <h1>İzleyici Kontrol Paneli</h1>
         
-        <!-- Durum Mesajı -->
-        <div id="status" class="text-center text-yellow-400 mb-4 p-3 bg-gray-700 rounded-md">
-            Sunucuya bağlanılıyor...
-        </div>
-
-        <!-- Başlat Butonu -->
-        <div class="text-center mb-4">
-            <button id="startButton" class="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 px-6 rounded-lg text-xl transition duration-300 shadow-lg" disabled>
-                Yayını Başlat
-            </button>
-        </div>
-
-        <!-- Video Alanı -->
-        <div class="bg-black rounded-lg overflow-hidden shadow-inner">
-            <video id="remoteVideo" autoplay playsinline class="w-full h-auto"></video>
+        <!-- Bağlantı durumunu gösteren kutu -->
+        <div id="status" class="connecting">Sunucuya bağlanılıyor...</div>
+        
+        <!-- Yayını başlatma butonu -->
+        <button id="startButton" disabled>Yayını Başlat</button>
+        
+        <!-- Telefonun ekran görüntüsünün geleceği yer -->
+        <div id="video-container">
+            <video id="remoteVideo" playsinline autoplay muted></video>
         </div>
     </div>
 
     <script>
-        // ---------------------------------------------------------------------
+        // -----------------------------------------------------------------------------
         // SUNUCU BAĞLANTISI VE AYARLAR
-        // ---------------------------------------------------------------------
+        // -----------------------------------------------------------------------------
 
         // !!! ÇOK ÖNEMLİ !!!
-        // Bu IP adresini, sunucunuzun (server.py) çalıştığı IP adresi ile değiştirin.
-        // Şu anda yerel test için PC'nizin IP'sini (192.168.1.101) kullanıyoruz.
-        // Daha sonra bunu Google VPS'inizin PUBLIC IP adresi ile değiştireceksiniz.
-        const SERVER_URL = 'http://192.168.1.101:5000'; 
-        
+        // Burası, Render.com'un bize verdiği genel (public) adres olmalıdır.
+        // Bu adres, server.py dosyasının çalıştığı sunucunun adresidir.
+        // Yerel test adresi (192.168...) artık burada kullanılmayacak.
+        const SERVER_URL = 'https://stream-server-vr6z.onrender.com';
+
         const statusDiv = document.getElementById('status');
         const startButton = document.getElementById('startButton');
         const remoteVideo = document.getElementById('remoteVideo');
 
         let socket;
-        let pc; // WebRTC PeerConnection
+        let pc; // PeerConnection (WebRTC bağlantısı)
 
-        // WebRTC için STUN sunucu yapılandırması (Google'ınkini kullanıyoruz)
+        // WebRTC için STUN sunucu yapılandırması (Google'ın ücretsiz sunucusunu kullanıyoruz)
+        // Bu, iki cihazın (tablet ve telefon) birbirlerinin IP adreslerini bulmasını sağlar.
         const peerConnectionConfig = {
             'iceServers': [
                 { 'urls': 'stun:stun.l.google.com:19302' }
             ]
         };
 
-        // ---------------------------------------------------------------------
-        // ANA İŞLEVİ BAŞLAT
-        // ---------------------------------------------------------------------
-        function initialize() {
+        // -----------------------------------------------------------------------------
+        // ANA İŞLEV: SUNUCUYA BAĞLANMA
+        // -----------------------------------------------------------------------------
+
+        function connectToSignalingServer() {
             try {
-                socket = io(SERVER_URL);
-                setupSocketListeners();
-            } catch (error) {
-                statusDiv.textContent = `Sunucuya bağlanılamadı: ${error.message}`;
-                statusDiv.classList.replace('text-yellow-400', 'text-red-500');
+                // Sunucuya (server.py) Socket.IO ile bağlanmayı deniyoruz.
+                socket = io(SERVER_URL, {
+                    transports: ['websocket', 'polling'] // Önce WebSocket'i dene, olmazsa polling'e geç
+                });
+
+                // 1. BAĞLANTI BAŞARILI OLDUĞUNDA
+                socket.on('connect', () => {
+                    console.log('Sunucuya (server.py) başarıyla bağlandı.');
+                    statusDiv.textContent = 'Sunucuya başarıyla bağlandı...';
+                    statusDiv.className = 'connected';
+                    startButton.disabled = false; // "Başlat" butonunu aktif et
+                });
+
+                // 2. BAĞLANTI KESİLDİĞİNDE
+                socket.on('disconnect', () => {
+                    console.log('Sunucuyla bağlantı kesildi.');
+                    statusDiv.textContent = 'Bağlantı kesildi. Yeniden bağlanılıyor...';
+                    statusDiv.className = 'disconnected';
+                    startButton.disabled = true;
+                    // Eğer yayın sırasında bağlantı koptuysa, videoyu durdur
+                    if (pc) {
+                        pc.close();
+                        pc = null;
+                    }
+                    remoteVideo.srcObject = null;
+                });
+
+                // 3. SUNUCUDAN BİR SİNYAL MESAJI GELDİĞİNDE (WebRTC için)
+                socket.on('signal', handleSignalingData);
+                
+                // 4. TELEFON (YAYINCI) YAYINI BİTİRDİĞİNDE
+                socket.on('yayin_bitti', () => {
+                    console.log('Yayıncı yayını bitirdi.');
+                    statusDiv.textContent = 'Yayıncı bağlantıyı sonlandırdı.';
+                    if (pc) {
+                        pc.close();
+                        pc = null;
+                    }
+                    remoteVideo.srcObject = null;
+                });
+
+            } catch (err) {
+                console.error('Socket.IO bağlantı hatası:', err);
+                statusDiv.textContent = 'Sunucuya bağlanılamadı. (Hata)';
+                statusDiv.className = 'disconnected';
             }
-
-            startButton.onclick = sendStartCommand;
         }
 
-        // ---------------------------------------------------------------------
-        // 1. SOCKET.IO DİNLEYİCİLERİ
-        // ---------------------------------------------------------------------
-        function setupSocketListeners() {
-            socket.on('connect', () => {
-                statusDiv.textContent = 'Sunucuya başarıyla bağlandı. Telefonun bağlanması bekleniyor...';
-                statusDiv.classList.replace('text-yellow-400', 'text-green-500');
-                // Henüz başlatamayız, telefonun bağlanmasını beklemeliyiz
-                // (Gelişmiş bir sistemde sunucu bize "telefon hazır" demeli)
-                // Şimdilik butonu direkt aktif edelim:
-                startButton.disabled = false;
-            });
+        // -----------------------------------------------------------------------------
+        // WebRTC (VİDEO AKIŞI) FONKSİYONLARI
+        // -----------------------------------------------------------------------------
 
-            socket.on('disconnect', () => {
-                statusDiv.textContent = 'Sunucuyla bağlantı kesildi.';
-                statusDiv.classList.replace('text-green-500', 'text-red-500');
-                startButton.disabled = true;
-                stopConnection();
-            });
-
-            socket.on('yayin_bitti', () => {
-                statusDiv.textContent = 'Yayıncı (telefon) bağlantıyı sonlandırdı.';
-                statusDiv.classList.replace('text-green-500', 'text-yellow-400');
-                stopConnection();
-            });
-
-            // 4. WEBRTC SİNYALLERİNİ ALMA
-            // Telefondan gelen "offer" (teklif) veya "ice candidate" (adres)
-            socket.on('signal', handleSignal);
-        }
-
-        // ---------------------------------------------------------------------
-        // 2. "BAŞLAT" BUTONUNA BASILDIĞINDA
-        // ---------------------------------------------------------------------
-        function sendStartCommand() {
-            statusDiv.textContent = "Telefona 'yayını başlat' komutu gönderiliyor...";
-            startButton.disabled = true;
-
-            // 1. Python sunucusuna komutu gönder
-            socket.emit('izleyici_baslat_komutu', { message: 'Lütfen yayını başlat' });
+        // "Yayını Başlat" butonuna tıklandığında...
+        startButton.onclick = () => {
+            if (!socket || !socket.connected) {
+                alert('Sunucuya bağlı değiliz!');
+                return;
+            }
             
-            // 2. WebRTC bağlantısını oluştur ve dinlemeye başla
-            // Telefonun bize 'offer' göndermesini bekleyeceğiz.
-            createPeerConnection();
-        }
+            console.log('Yayını başlatma komutu gönderiliyor...');
+            // 1. WebRTC bağlantısını hazırla
+            startWebRTC();
+            
+            // 2. Sunucuya (server.py) "başlat" komutumuzu iletiyoruz.
+            // Sunucu bu komutu alıp telefona gönderecek.
+            socket.emit('izleyici_baslat_komutu', { 'message': 'Lütfen yayını başlat' });
+            
+            statusDiv.textContent = 'Telefondan yayın bekleniyor...';
+            startButton.disabled = true;
+        };
 
-        // ---------------------------------------------------------------------
-        // 3. WEBRTC BAĞLANTISINI OLUŞTUR
-        // ---------------------------------------------------------------------
-        function createPeerConnection() {
+        // WebRTC bağlantısını kuran ana fonksiyon
+        function startWebRTC() {
+            // Eğer zaten bir bağlantı varsa, önce onu kapat
             if (pc) {
-                pc.close(); // Önceki bağlantı varsa kapat
+                pc.close();
             }
 
             pc = new RTCPeerConnection(peerConnectionConfig);
-
-            // Telefondan ekran görüntüsü (track) geldiğinde tetiklenir
+            
+            // ÖNEMLİ: Bu fonksiyon, telefondan video/ses akışı geldiğinde tetiklenir
             pc.ontrack = (event) => {
-                statusDiv.textContent = "Yayın alınıyor!";
-                if (remoteVideo.srcObject !== event.streams[0]) {
+                console.log('Telefondan video/ses akışı alındı!');
+                statusDiv.textContent = 'Yayın Alınıyor!';
+                if (event.streams && event.streams[0]) {
                     remoteVideo.srcObject = event.streams[0];
-                    console.log('Video akışı başarıyla eklendi.');
                 }
             };
-
-            // Yeni bir ICE adresi bulunduğunda tetiklenir
+            
+            // WebRTC'nin ağ adreslerini (ICE candidates) bulduğunda tetiklenir
             pc.onicecandidate = (event) => {
                 if (event.candidate) {
-                    // Bulunan adresi 'signal' yoluyla telefona gönder
-                    console.log('Bulunan ICE adresi telefona gönderiliyor:', event.candidate);
-                    socket.emit('signal', { type: 'ice', candidate: event.candidate });
+                    console.log('ICE adresi bulundu, sunucuya gönderiliyor...');
+                    // Bulunan adresi sunucuya gönder (sunucu da telefona iletecek)
+                    socket.emit('signal', { 'candidate': event.candidate });
                 }
             };
 
-            pc.oniceconnectionstatechange = () => {
-                console.log('ICE Durumu:', pc.iceConnectionState);
-                if (pc.iceConnectionState === 'disconnected' || pc.iceConnectionState === 'failed') {
-                    statusDiv.textContent = "Bağlantı koptu veya kurulamadı.";
-                    stopConnection();
+            // Bağlantı durumunu izle
+            pc.onconnectionstatechange = (event) => {
+                console.log('WebRTC Bağlantı Durumu:', pc.connectionState);
+                if (pc.connectionState === 'disconnected' || pc.connectionState === 'failed' || pc.connectionState === 'closed') {
+                    statusDiv.textContent = 'Yayın bağlantısı koptu.';
+                    startButton.disabled = false;
+                    remoteVideo.srcObject = null;
                 }
             };
         }
-        
-        // ---------------------------------------------------------------------
-        // 4. TELEFONDAN GELEN SİNYALLERİ İŞLE
-        // ---------------------------------------------------------------------
-        async function handleSignal(data) {
+
+        // Sunucudan (veya telefondan) gelen sinyal mesajlarını (offer, answer, candidate) işler
+        async function handleSignalingData(data) {
             if (!pc) {
-                // Eğer 'başlat' demeden sinyal gelirse (ki gelmemeli)
-                createPeerConnection();
+                // Eğer biz "Başlat" demeden önce telefondan bir sinyal gelirse
+                // (bu nadir bir durumdur ama olabilir), biz de bağlantıyı başlatalım.
+                startWebRTC();
             }
 
             try {
-                if (data.type === 'offer') {
-                    // Bu, telefondan gelen "yayın teklifi"
-                    console.log('Telefondan yayın teklifi (offer) alındı.');
-                    await pc.setRemoteDescription(new RTCSessionDescription(data));
-
-                    // Teklifi kabul eden bir "cevap" (answer) oluştur
+                if (data.offer) {
+                    // 1. Telefondan "yayın teklifi" (offer) geldi.
+                    console.log('Telefondan "offer" alındı.');
+                    await pc.setRemoteDescription(new RTCSessionDescription(data.offer));
+                    
+                    // 2. Biz de ona "cevap" (answer) oluşturalım.
                     const answer = await pc.createAnswer();
                     await pc.setLocalDescription(answer);
-
-                    // Cevabı 'signal' yoluyla telefona geri gönder
-                    console.log('Cevap (answer) oluşturuldu ve telefona gönderiliyor.');
-                    socket.emit('signal', { type: 'answer', sdp: answer.sdp });
-                    statusDiv.textContent = "Teklif alındı, cevap gönderildi. Bağlantı kuruluyor...";
+                    
+                    // 3. "Cevabımızı" sunucu üzerinden telefona gönderelim.
+                    console.log('"Answer" oluşturuldu ve telefona gönderiliyor.');
+                    socket.emit('signal', { 'answer': answer });
                 
-                } else if (data.type === 'ice' && data.candidate) {
-                    // Bu, telefonun "adres bilgisi"
-                    console.log('Telefondan ICE adresi alındı, ekleniyor.');
+                } else if (data.answer) {
+                    // Bu senaryo (izleyici olduğumuz için) pek olası değil, ama...
+                    console.log('Telefondan "answer" alındı.');
+                    await pc.setRemoteDescription(new RTCSessionDescription(data.answer));
+                
+                } else if (data.candidate) {
+                    // 3. Telefondan bir "ağ adresi" (ICE candidate) geldi.
+                    console.log('Telefondan "ICE candidate" alındı.');
                     await pc.addIceCandidate(new RTCIceCandidate(data.candidate));
-                
-                } else {
-                    console.warn('Bilinmeyen sinyal türü alındı:', data);
                 }
-            } catch (error) {
-                console.error('Sinyal işlenirken hata oluştu:', error);
-                statusDiv.textContent = `Hata: ${error.message}`;
+            } catch (err) {
+                console.error('Sinyal işleme hatası:', err);
             }
         }
 
-        // ---------------------------------------------------------------------
-        // 5. BAĞLANTIYI TEMİZLE
-        // ---------------------------------------------------------------------
-        function stopConnection() {
-            if (pc) {
-                pc.close();
-                pc = null;
-            }
-            remoteVideo.srcObject = null;
-            startButton.disabled = false;
-        }
-
-        // Sayfa yüklendiğinde başlat
-        window.onload = initialize;
+        // Sayfa yüklendiğinde sunucuya bağlanmayı başlat
+        connectToSignalingServer();
 
     </script>
 </body>
 </html>
+
