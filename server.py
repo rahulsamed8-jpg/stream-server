@@ -4,10 +4,20 @@
 # Flask-SocketIO: Gerçek zamanlı (WebSocket) iletişimi yönetmek için.
 # Flask-CORS: Tabletin sunucuya bağlanırken "Cross-Origin" hatasını engellemek için.
 # send_from_directory: panel.html dosyasını sunmak için eklendi.
+# os ve os.path: panel.html dosyasının tam yolunu bulmak için eklendi (404 Hatası Düzeltmesi)
 # -----------------------------------------------------------------------------
+import os
 from flask import Flask, request, send_from_directory
 from flask_socketio import SocketIO, emit, join_room, leave_room
 from flask_cors import CORS
+
+# -----------------------------------------------------------------------------
+# 404 Hatası Düzeltmesi: panel.html dosyasının bulunduğu klasörü tanımla
+# -----------------------------------------------------------------------------
+# Bu kod, server.py dosyasının bulunduğu klasörün tam yolunu alır.
+# Örn: /opt/render/project/src
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
 
 # -----------------------------------------------------------------------------
 # Flask uygulamamızı başlatıyoruz.
@@ -33,13 +43,14 @@ def index():
     return "Python Sinyal Sunucusu Aktif! Bağlantı bekleniyor..."
 
 # -----------------------------------------------------------------------------
-# Panel Arayüzünü Sunmak İçin YENİ EKLENEN KISIM
-# http://...:5000/panel adresine girildiğinde panel.html dosyasını gönderir.
+# Panel Arayüzünü Sunmak İçin EKLENEN KISIM
+# http://.../panel adresine girildiğinde panel.html dosyasını gönderir.
 # -----------------------------------------------------------------------------
 @app.route('/panel')
 def send_panel():
-    # panel.html dosyasının server.py ile aynı klasörde olduğunu varsayar.
-    return send_from_directory('.', 'panel.html')
+    # 404 Hatası Düzeltmesi: Artık '.' yerine BASE_DIR (tam yol) kullanıyoruz.
+    # Bu, panel.html dosyasını %100 bulmasını sağlar.
+    return send_from_directory(BASE_DIR, 'panel.html')
 
 # -----------------------------------------------------------------------------
 # İLETİŞİM (SİNYALLEŞME) OLAYLARI
@@ -94,12 +105,16 @@ def handle_signal(data):
 
 # -----------------------------------------------------------------------------
 # Sunucuyu Başlatma Bloğu
-# Bu kodun "python server.py" ile çalıştırılmasını sağlar.
 # -----------------------------------------------------------------------------
 if __name__ == '__main__':
     print("Sinyal sunucusu başlatılıyor...")
-    # host='0.0.0.0' ayarı, sunucunun VPS'in genel IP adresinden 
-    # dinleme yapmasını sağlar. 'localhost' KULLANMAYIN!
-    # debug=True: Geliştirme aşamasında hataları görmek için.
-    socketio.run(app, host='0.0.0.0', port=5000, debug=True, allow_unsafe_werkzeug=True)
+    
+    # Render.com'un istediği "allow_unsafe_werkzeug=True" eklendi.
+    # Bu, "RuntimeError" hatasını çözecek.
+    socketio.run(
+        app, 
+        host='0.0.0.0', 
+        port=10000, 
+        allow_unsafe_werkzeug=True
+    )
 
